@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Generador QR — Pruebas</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#111}
+.wrap{max-width:560px;margin:0 auto;padding:18px}
+.card{background:#fff;border-radius:18px;padding:22px;box-shadow:0 5px 22px #0002}
+h1{font-size:30px;margin:0 0 20px}
+label{display:block;font-weight:700;font-size:17px;margin:18px 0 7px}
+select,input{width:100%;padding:14px;border:2px solid #d0d0d0;border-radius:10px;font-size:18px;background:#fff}
+input[readonly]{background:#f1f1f1}
+.corrrow{display:flex;gap:10px}
+.corrrow input{flex:1}
+.check{width:54px;margin:0;padding:0;font-size:24px;background:#e9e9e9;color:#111}
+.check.active{background:#111;color:#fff}
+button{width:100%;padding:14px;border:0;border-radius:10px;background:#111;color:#fff;font-size:16px;font-weight:800;margin-top:18px}
+#qr{display:flex;align-items:center;justify-content:center;margin-top:20px}
+#qr img{width:320px;height:320px}
+.result{margin-top:18px;background:#f5f5f5;border-radius:10px;padding:12px;line-height:1.6}
+pre{background:#111;color:#fff;padding:12px;border-radius:9px;white-space:pre-wrap;word-break:break-all;font-size:12px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.actions button{margin-top:10px}
+.status{text-align:center;color:#666;font-size:13px;margin-top:10px}
+details{margin-top:22px;border-top:1px solid #ddd;padding-top:15px}
+summary{font-weight:700;cursor:pointer}
+.small{font-size:12px;color:#666;line-height:1.45}
+.warning{font-size:12px;color:#555;background:#fafafa;padding:10px;border-radius:8px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>Generador QR</h1>
+
+<label for="serie">Serie / Sede</label>
+<select id="serie"></select>
+
+<label for="correlativoAuto">Correlativo</label>
+<div class="corrrow">
+  <input id="correlativoAuto" type="text" readonly>
+  <button id="editarCorr" class="check" title="Permitir editar correlativo" aria-label="Permitir editar correlativo">✓</button>
+</div>
+
+<label for="importe">Importe / Total</label>
+<input id="importe" type="text" inputmode="decimal" placeholder="Ej. 88.19">
+
+<label for="dni">DNI</label>
+<input id="dni" type="text" inputmode="numeric" placeholder="Ingrese DNI">
+
+<button id="generar">GENERAR QR</button>
+<div class="status" id="status"></div>
+
+<div class="result" id="resultado" hidden>
+<div><b>Serie:</b> <span id="rSerie"></span></div>
+<div><b>Correlativo:</b> <span id="rCorr"></span></div>
+<div><b>Importe:</b> <span id="rImporte"></span></div>
+<div><b>IGV:</b> <span id="rIgv"></span></div>
+<div><b>Total:</b> <span id="rTotal"></span></div>
+<div><b>Fecha:</b> <span id="rFecha"></span></div>
+<div><b>DNI:</b> <span id="rDni"></span></div>
+</div>
+
+<div id="qr" hidden></div>
+
+<div id="datosBox" hidden>
+<label>Datos QR:</label>
+<pre id="datos"></pre>
+<div class="actions">
+<button id="copiar">COPIAR DATOS</button>
+<button id="nueva">NUEVA PRUEBA</button>
+</div>
+</div>
+
+<details>
+<summary>Configuración administrativa</summary>
+<p class="small">La edición manual del correlativo está bloqueada normalmente. El botón ✓ permite editarlo para pruebas. Los contadores se guardan por serie.</p>
+
+<label for="initialBA03">Correlativo inicial BA03</label>
+<input id="initialBA03" inputmode="numeric">
+
+<label for="initialBA29">Correlativo inicial BA29</label>
+<input id="initialBA29" inputmode="numeric">
+
+<label for="thirdCode">Tercera serie</label>
+<input id="thirdCode">
+
+<label for="thirdSede">Tercera sede</label>
+<input id="thirdSede">
+
+<label for="initialThird">Correlativo inicial tercera serie</label>
+<input id="initialThird" inputmode="numeric">
+
+<button id="guardarConfig">GUARDAR CONFIGURACIÓN</button>
+</details>
+
+<p class="warning">Modo de prueba. Los datos generados deben usarse únicamente para pruebas y desarrollo, no como comprobantes oficiales.</p>
+</div>
+</div>
+
+<script>
+const RUC="20608300393", TIPO="03", TIPO_DOCUMENTO="1";
+const COUNTER_KEY="qr_contadores_v4", CONFIG_KEY="qr_config_v4";
+const $=id=>document.getElementById(id);
+
+function defaultConfig(){
+ return {
+  BA03:{sede:"Santa Clara",initial:"8769393"},
+  BA29:{sede:"Ceres",initial:"6855401"},
+  third:{code:"BA50",sede:"Tercera sede",initial:"7000001"}
+ };
+}
+function loadConfig(){
+ try{
+  const d=defaultConfig(),x=JSON.parse(localStorage.getItem(CONFIG_KEY)||"{}");
+  return {
+   BA03:{sede:"Santa Clara",initial:String(x.BA03?.initial||d.BA03.initial)},
+   BA29:{sede:"Ceres",initial:String(x.BA29?.initial||d.BA29.initial)},
+   third:{code:String(x.third?.code||d.third.code),sede:String(x.third?.sede||d.third.sede),initial:String(x.third?.initial||d.third.initial)}
+  };
+ }catch(e){return defaultConfig()}
+}
+function saveConfig(c){localStorage.setItem(CONFIG_KEY,JSON.stringify(c))}
+function getSeries(){
+ const c=loadConfig();
+ return [
+  {code:"BA03",sede:c.BA03.sede,initial:c.BA03.initial},
+  {code:"BA29",sede:c.BA29.sede,initial:c.BA29.initial},
+  {code:c.third.code,sede:c.third.sede,initial:c.third.initial}
+ ];
+}
+function refreshSeries(){
+ const old=$("serie").value;
+ $("serie").innerHTML="";
+ getSeries().forEach(s=>{
+  const o=document.createElement("option");
+  o.value=s.code;o.textContent=s.code+" — "+s.sede;$("serie").appendChild(o);
+ });
+ $("serie").value=[...$("serie").options].some(o=>o.value===old)?old:"BA03";
+ updateAutoCorrelativo();
+}
+function loadCounters(){
+ try{return JSON.parse(localStorage.getItem(COUNTER_KEY)||"{}")}catch(e){return {}}
+}
+function saveCounters(c){localStorage.setItem(COUNTER_KEY,JSON.stringify(c))}
+function nextPreview(code){
+ const counters=loadCounters(),s=getSeries().find(x=>x.code===code);
+ if(!s)return "";
+ if(!Object.prototype.hasOwnProperty.call(counters,code))return s.initial;
+ const cur=String(counters[code]);
+ return (BigInt(cur)+1n).toString().padStart(cur.length,"0");
+}
+function consumeAutomatic(code){
+ const counters=loadCounters(),s=getSeries().find(x=>x.code===code);
+ if(!s||!/^\d+$/.test(s.initial))throw new Error("Configura el correlativo inicial.");
+ let value;
+ if(!Object.prototype.hasOwnProperty.call(counters,code)){
+  value=s.initial;
+ }else{
+  const cur=String(counters[code]);
+  value=(BigInt(cur)+1n).toString().padStart(cur.length,"0");
+ }
+ counters[code]=value;
+ saveCounters(counters);
+ return value;
+}
+function updateAutoCorrelativo(){
+ $("correlativoAuto").value=nextPreview($("serie").value);
+ $("correlativoAuto").readOnly=!$("editarCorr").classList.contains("active");
+}
+function fechaHoy(){
+ const d=new Date();
+ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function money(n){return n.toFixed(2)}
+function calcularIGV(total){
+ // Para este modo de prueba se toma el importe ingresado como TOTAL.
+ // Se redondea hacia arriba a 2 decimales para reproducir el ejemplo
+ // 88.19 -> IGV 13.46.
+ return Math.ceil((total*18/118)*100-1e-9)/100;
+}
+
+function generar(){
+ const code=$("serie").value,s=getSeries().find(x=>x.code===code);
+ const raw=$("importe").value.trim(),dni=$("dni").value.trim();
+ const total=Number(raw.replace(",","."));
+ if(!raw||!Number.isFinite(total)||total<0){$("status").textContent="Ingrese un importe válido.";return}
+ if(!dni){$("status").textContent="Ingrese el DNI.";return}
+
+ let corr;
+ if($("editarCorr").classList.contains("active")){
+  corr=$("correlativoAuto").value.trim();
+  if(!/^\d+$/.test(corr)){ $("status").textContent="El correlativo debe ser numérico.";return }
+  // Al usar edición manual, no se consume el contador automáticamente.
+  // La opción es exclusivamente para pruebas.
+ }else{
+  try{corr=consumeAutomatic(code)}catch(e){$("status").textContent=e.message;return}
+ }
+
+ const igv=calcularIGV(total),fecha=fechaHoy();
+ const payload=RUC+"|"+TIPO+"|"+code+"|"+corr+"|"+money(igv)+"|"+money(total)+"|"+fecha+"|"+TIPO_DOCUMENTO+"|"+dni+"|";
+
+ $("rSerie").textContent=code;$("rCorr").textContent=corr;$("rImporte").textContent=raw;
+ $("rIgv").textContent=money(igv);$("rTotal").textContent=money(total);
+ $("rFecha").textContent=fecha;$("rDni").textContent=dni;$("datos").textContent=payload;
+ $("resultado").hidden=false;$("datosBox").hidden=false;$("qr").hidden=false;
+ $("status").textContent="QR generado correctamente.";
+
+ const img=new Image();img.width=320;img.height=320;img.alt="QR de prueba";
+ img.onload=()=>{$("qr").replaceChildren(img)};
+ img.onerror=()=>{$("qr").innerHTML="<div>No se pudo cargar el QR. Verifica Internet.</div>"};
+ img.src="https://quickchart.io/qr?text="+encodeURIComponent(payload)+"&size=320&margin=1&ecLevel=M&x="+Date.now();
+
+ // Si fue automático, el campo muestra inmediatamente el siguiente.
+ if(!$("editarCorr").classList.contains("active"))updateAutoCorrelativo();
+}
+function nueva(){
+ $("importe").value="";$("dni").value="";$("resultado").hidden=true;$("datosBox").hidden=true;
+ $("qr").hidden=true;$("qr").innerHTML="";$("status").textContent="Nueva prueba lista.";
+ if(!$("editarCorr").classList.contains("active"))updateAutoCorrelativo();
+ $("importe").focus();
+}
+$("editarCorr").onclick=()=>{
+ $("editarCorr").classList.toggle("active");
+ const active=$("editarCorr").classList.contains("active");
+ $("correlativoAuto").readOnly=!active;
+ $("status").textContent=active?"Edición de correlativo activada.":"Edición de correlativo desactivada.";
+ if(!active)updateAutoCorrelativo();
+};
+$("serie").onchange=()=>{if(!$("editarCorr").classList.contains("active"))updateAutoCorrelativo()};
+$("generar").onclick=generar;$("nueva").onclick=nueva;
+$("copiar").onclick=async()=>{try{await navigator.clipboard.writeText($("datos").textContent);$("status").textContent="Datos copiados."}catch(e){$("status").textContent="No se pudo copiar automáticamente."}};
+
+$("guardarConfig").onclick=()=>{
+ const old=loadConfig();
+ const i03=$("initialBA03").value.trim(),i29=$("initialBA29").value.trim();
+ const code=$("thirdCode").value.trim().toUpperCase(),sede=$("thirdSede").value.trim(),it=$("initialThird").value.trim();
+ if(!/^\d+$/.test(i03)||!/^\d+$/.test(i29)||!/^[A-Z0-9-]{2,10}$/.test(code)||!sede||!/^\d+$/.test(it)){
+  alert("Completa correctamente los correlativos y la tercera serie.");return
+ }
+ if(code==="BA03"||code==="BA29"){alert("La tercera serie no puede ser BA03 ni BA29.");return}
+ saveConfig({BA03:{sede:"Santa Clara",initial:i03},BA29:{sede:"Ceres",initial:i29},third:{code,sede,initial:it}});
+ const counters=loadCounters();
+ if(old.BA03.initial!==i03)delete counters.BA03;
+ if(old.BA29.initial!==i29)delete counters.BA29;
+ if(old.third.code!==code||old.third.initial!==it)delete counters[old.third.code];
+ delete counters[code];saveCounters(counters);
+ refreshSeries();$("status").textContent="Configuración guardada.";
+};
+
+(function init(){
+ const c=loadConfig();
+ $("initialBA03").value=c.BA03.initial;$("initialBA29").value=c.BA29.initial;
+ $("thirdCode").value=c.third.code;$("thirdSede").value=c.third.sede;$("initialThird").value=c.third.initial;
+ refreshSeries();
+})();
+</script>
+</body>
+</html>
